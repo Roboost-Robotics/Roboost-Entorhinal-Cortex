@@ -86,7 +86,7 @@ ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
 
 Note that depending on the communication method, you will need to modify the firmware of the microcontroller. Per default, the firmware is configured to use UDP over wifi.
 
-#### Running the Robot
+#### Sensor Data Visualization
 
 Once the micro-ROS agent is running, you can vizualise the sensor data using RViz2:
 

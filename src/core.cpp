@@ -138,7 +138,7 @@ void setup()
     digitalWrite(RPLIDAR_MOTOR, HIGH);
 
     // Set frame_id
-    scan_msg.header.frame_id.data = (char*)"lidar";
+    scan_msg.header.frame_id.data = (char*)"lidar_link";
     scan_msg.header.frame_id.size = strlen(scan_msg.header.frame_id.data);
     scan_msg.header.frame_id.capacity = scan_msg.header.frame_id.size + 1;
 
@@ -222,8 +222,14 @@ void loop()
         scan_msg.time_increment = scan_msg.scan_time / (num_measurements - 1);
 
         // Populate scan message data
+        uint32_t valid_measurements = 0;
         for (size_t i = 0; i < num_measurements; i++)
         {
+            if (measurements[i].quality > 14 &&
+                measurements[i].distance > scan_msg.range_min * 1000.0 &&
+                measurements[i].distance <
+                    scan_msg.range_max * 1000.0) // TODO: Parameterize
+                valid_measurements++;
             scan_msg.ranges.data[i] = measurements[i].distance / 1000.0;
             scan_msg.intensities.data[i] = measurements[i].quality;
         }
@@ -232,8 +238,22 @@ void loop()
         scan_msg.ranges.size = num_measurements;
         scan_msg.intensities.size = num_measurements;
 
-        // Publish the scan message
-        RCSOFTCHECK(rcl_publish(&scan_publisher, &scan_msg, NULL));
+        // Publish the scan message if number of valid measurements is above
+        // threshold
+        if (valid_measurements > 150) // TODO: Parameterize
+        {
+            RCSOFTCHECK(rcl_publish(&scan_publisher, &scan_msg, NULL));
+        }
+        else
+        {
+            diagnostic_msg.level = diagnostic_msgs__msg__DiagnosticStatus__WARN;
+            diagnostic_msg.message.data = (char*)"Scan invalid";
+            diagnostic_msg.message.size = strlen(diagnostic_msg.message.data);
+            diagnostic_msg.message.capacity = diagnostic_msg.message.size + 1;
+
+            RCSOFTCHECK(
+                rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+        }
     }
     else
     {

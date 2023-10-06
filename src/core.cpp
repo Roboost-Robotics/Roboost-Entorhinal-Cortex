@@ -218,8 +218,6 @@ void loop()
         scan_msg.angle_max = measurements.back().angle * DEG_TO_RAD;
         scan_msg.angle_increment =
             (scan_msg.angle_max - scan_msg.angle_min) / (num_measurements - 1);
-        scan_msg.scan_time = (scan_end_time - scan_start_time) / 1000.0;
-        scan_msg.time_increment = scan_msg.scan_time / (num_measurements - 1);
 
         // Populate scan message data
         uint32_t valid_measurements = 0;

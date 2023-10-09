@@ -55,6 +55,14 @@ float ranges_buffer[max_measurements];
 float intensities_buffer[max_measurements];
 size_t num_measurements = 0;
 
+// Time synchronization variables
+unsigned long last_time_sync_ms = 0;
+unsigned long last_time_sync_ns = 0;
+unsigned long time_sync_interval = 1000; // Sync timeout
+const int timeout_ms = 500;
+int64_t synced_time_ms = 0;
+int64_t synced_time_ns = 0;
+
 void setup()
 {
     // Initialize serial and lidar
@@ -77,6 +85,9 @@ void setup()
     // Configure micro-ROS
     IPAddress agent_ip(AGENT_IP);
     uint16_t agent_port = AGENT_PORT;
+
+    // // TODO: Remove after testing
+    // set_microros_serial_transports(Serial);
 
     set_microros_wifi_transports((char*)SSID, (char*)SSID_PW, agent_ip,
                                  agent_port);
@@ -156,6 +167,21 @@ void setup()
 
 void loop()
 {
+    // Time synchronization
+    if (millis() - last_time_sync_ms > time_sync_interval)
+    {
+        // Synchronize time with the agent
+        rmw_uros_sync_session(timeout_ms);
+
+        if (rmw_uros_epoch_synchronized())
+        {
+            // Get time in milliseconds or nanoseconds
+            synced_time_ms = rmw_uros_epoch_millis();
+            synced_time_ns = rmw_uros_epoch_nanos();
+            last_time_sync_ms = millis();
+            last_time_sync_ns = micros() * 1000;
+        }
+    }
 
     // Read battery voltage level
     float battery_voltage = analogRead(PWR_IN) * (3.3 * PWR_FACTOR / 4095.0);
@@ -240,6 +266,15 @@ void loop()
         // threshold
         if (valid_measurements > 150) // TODO: Parameterize
         {
+            scan_msg.header.stamp.sec =
+                (synced_time_ms + millis() - last_time_sync_ms) / 1000;
+            scan_msg.header.stamp.nanosec =
+                synced_time_ns + (micros() * 1000 - last_time_sync_ns);
+            scan_msg.header.stamp.nanosec %= 1000000000;
+
+            scan_msg.scan_time = (scan_end_time - scan_start_time) / 1000.0;
+            scan_msg.time_increment = scan_msg.scan_time / num_measurements;
+
             RCSOFTCHECK(rcl_publish(&scan_publisher, &scan_msg, NULL));
         }
         else

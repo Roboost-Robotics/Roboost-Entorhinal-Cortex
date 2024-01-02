@@ -86,11 +86,10 @@ void setup()
     IPAddress agent_ip(AGENT_IP);
     uint16_t agent_port = AGENT_PORT;
 
-    // // TODO: Remove after testing
-    // set_microros_serial_transports(Serial);
+    set_microros_serial_transports(Serial);
 
-    set_microros_wifi_transports((char*)SSID, (char*)SSID_PW, agent_ip,
-                                 agent_port);
+    // set_microros_wifi_transports((char*)SSID, (char*)SSID_PW, agent_ip,
+    //                              agent_port);
     delay(2000);
 
     allocator = rcl_get_default_allocator();
@@ -231,61 +230,75 @@ void loop()
             lidar.waitPoint();
         } while (!lidar.getCurrentPoint().startBit);
 
-        unsigned long scan_end_time = millis();
-
-        // Order the measurements by angle.
-        std::sort(measurements.begin(), measurements.end(),
-                  [](const RPLidarMeasurement& a, const RPLidarMeasurement& b)
-                  { return a.angle < b.angle; });
-
-        // Update scan message data
-        num_measurements = measurements.size();
-        scan_msg.angle_min = measurements.front().angle * DEG_TO_RAD;
-        scan_msg.angle_max = measurements.back().angle * DEG_TO_RAD;
-        scan_msg.angle_increment =
-            (scan_msg.angle_max - scan_msg.angle_min) / (num_measurements - 1);
-
-        // Populate scan message data
-        uint32_t valid_measurements = 0;
-        for (size_t i = 0; i < num_measurements; i++)
+        if (measurements.size() >= 200)
         {
-            if (measurements[i].quality > 14 &&
-                measurements[i].distance > scan_msg.range_min * 1000.0 &&
-                measurements[i].distance <
-                    scan_msg.range_max * 1000.0) // TODO: Parameterize
-                valid_measurements++;
-            scan_msg.ranges.data[i] = measurements[i].distance / 1000.0;
-            scan_msg.intensities.data[i] = measurements[i].quality;
-        }
+            unsigned long scan_end_time = millis();
 
-        // Update scan message size
-        scan_msg.ranges.size = num_measurements;
-        scan_msg.intensities.size = num_measurements;
+            // Order the measurements by angle.
+            std::sort(
+                measurements.begin(), measurements.end(),
+                [](const RPLidarMeasurement& a, const RPLidarMeasurement& b)
+                { return a.angle < b.angle; });
 
-        // Publish the scan message if number of valid measurements is above
-        // threshold
-        if (valid_measurements > 150) // TODO: Parameterize
-        {
-            scan_msg.header.stamp.sec =
-                (synced_time_ms + millis() - last_time_sync_ms) / 1000;
-            scan_msg.header.stamp.nanosec =
-                synced_time_ns + (micros() * 1000 - last_time_sync_ns);
-            scan_msg.header.stamp.nanosec %= 1000000000;
+            // Update scan message data
+            num_measurements = measurements.size();
+            scan_msg.angle_min = measurements.front().angle * DEG_TO_RAD;
+            scan_msg.angle_max = measurements.back().angle * DEG_TO_RAD;
+            scan_msg.angle_increment =
+                (scan_msg.angle_max - scan_msg.angle_min) /
+                (num_measurements - 1);
 
-            scan_msg.scan_time = (scan_end_time - scan_start_time) / 1000.0;
-            scan_msg.time_increment = scan_msg.scan_time / num_measurements;
+            // Populate scan message data
+            uint32_t num_partially_invalid_measurements = 0;
+            uint32_t num_invalid_measurements = 0;
+            for (size_t i = 0; i < num_measurements; i++)
+            {
+                if (measurements[i].quality == 0)
+                    num_invalid_measurements++;
+                else if (measurements[i].quality < 14)
+                    num_partially_invalid_measurements++;
 
-            RCSOFTCHECK(rcl_publish(&scan_publisher, &scan_msg, NULL));
-        }
-        else
-        {
-            diagnostic_msg.level = diagnostic_msgs__msg__DiagnosticStatus__WARN;
-            diagnostic_msg.message.data = (char*)"Scan invalid";
-            diagnostic_msg.message.size = strlen(diagnostic_msg.message.data);
-            diagnostic_msg.message.capacity = diagnostic_msg.message.size + 1;
+                scan_msg.ranges.data[i] = measurements[i].distance / 1000.0;
+                scan_msg.intensities.data[i] = measurements[i].quality;
+            }
 
-            RCSOFTCHECK(
-                rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+            u_int32_t num_valid_measurements =
+                num_measurements - num_invalid_measurements;
+
+            // Update scan message size
+            scan_msg.ranges.size = num_measurements;
+            scan_msg.intensities.size = num_measurements;
+
+            if (num_partially_invalid_measurements / num_valid_measurements <
+                0.1) // TODO: Make this a parameter
+            {
+                scan_msg.header.stamp.sec =
+                    (synced_time_ms + millis() - last_time_sync_ms) / 1000;
+                scan_msg.header.stamp.nanosec =
+                    synced_time_ns + (micros() * 1000 - last_time_sync_ns);
+                scan_msg.header.stamp.nanosec %= 1000000000;
+
+                scan_msg.scan_time = (scan_end_time - scan_start_time) / 1000.0;
+                scan_msg.time_increment = scan_msg.scan_time / num_measurements;
+
+                RCSOFTCHECK(rcl_publish(&scan_publisher, &scan_msg, NULL));
+            }
+            else
+            {
+                String msg = "Too many invalid measurements: " +
+                             String(num_invalid_measurements) + "/" +
+                             String(num_measurements);
+                diagnostic_msg.level =
+                    diagnostic_msgs__msg__DiagnosticStatus__WARN;
+                diagnostic_msg.message.data = (char*)msg.c_str();
+                diagnostic_msg.message.size =
+                    strlen(diagnostic_msg.message.data);
+                diagnostic_msg.message.capacity =
+                    diagnostic_msg.message.size + 1;
+
+                RCSOFTCHECK(
+                    rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+            }
         }
     }
     else

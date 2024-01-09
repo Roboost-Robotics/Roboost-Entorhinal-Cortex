@@ -1,8 +1,7 @@
 /**
  * @file core.cpp
  * @author Friedl Jakob (friedl.jak@gmail.com)
- * @brief Core file handling ROS communication, initialization and distribution
- * of relevant objects. Currently it supports the Roboost-V2 sensorshield
+ * @brief Core file handling ROS communication and sensor processing. Currently supports the Roboost-V2 sensorshield
  * hardware.
  * @version 0.1
  * @date 2023-07-06
@@ -26,7 +25,7 @@
 #include <RPLidar.h>
 
 #include "conf_hardware.h"
-#include "conf_network.h"
+// #include "conf_network.h"
 
 HardwareSerial RPLidarSerial(2);
 RPLidar lidar;
@@ -63,6 +62,16 @@ const int timeout_ms = 500;
 int64_t synced_time_ms = 0;
 int64_t synced_time_ns = 0;
 
+void publishDiagnosticMessage(const char* message)
+{
+    diagnostic_msg.level = diagnostic_msgs__msg__DiagnosticStatus__WARN;
+    diagnostic_msg.message.data = (char*)message;
+    diagnostic_msg.message.size = strlen(diagnostic_msg.message.data);
+    diagnostic_msg.message.capacity = diagnostic_msg.message.size + 1;
+
+    RCSOFTCHECK(rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+}
+
 void setup()
 {
     // Initialize serial and lidar
@@ -83,8 +92,8 @@ void setup()
     lidar.startScan();
 
     // Configure micro-ROS
-    IPAddress agent_ip(AGENT_IP);
-    uint16_t agent_port = AGENT_PORT;
+    // IPAddress agent_ip(AGENT_IP);
+    // uint16_t agent_port = AGENT_PORT;
 
     set_microros_serial_transports(Serial);
 
@@ -96,14 +105,14 @@ void setup()
 
     while (rclc_support_init(&support, 0, NULL, &allocator) != RCL_RET_OK)
     {
-        Serial.println("Error initializing rclc_support, trying again...");
+        Serial.println("Failed to create init options, retrying...");
         delay(100);
     }
 
     while (rclc_node_init_default(&node, "lidar_node", "", &support) !=
            RCL_RET_OK)
     {
-        Serial.println("Error initializing rclc_node, trying again...");
+        Serial.println("Failed to create node, retrying...");
         delay(100);
     }
 
@@ -112,7 +121,7 @@ void setup()
                ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan),
                "scan") != RCL_RET_OK)
     {
-        Serial.println("Error initializing scan_publisher, trying again...");
+        Serial.println("Failed to create scan publisher, retrying...");
         delay(100);
     }
 
@@ -121,7 +130,7 @@ void setup()
                ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
                "battery_level") != RCL_RET_OK)
     {
-        Serial.println("Error initializing battery_publisher, trying again...");
+        Serial.println("Failed to create battery publisher, retrying...");
         delay(100);
     }
 
@@ -132,14 +141,14 @@ void setup()
             "diagnostics") != RCL_RET_OK)
     {
         Serial.println(
-            "Error initializing diagnostic_publisher, trying again...");
+            "Failed to create diagnostic publisher, retrying...");
         delay(100);
     }
 
     while (rclc_executor_init(&executor, &support.context, 1, &allocator) !=
            RCL_RET_OK)
     {
-        Serial.println("Error initializing rclc_executor, trying again...");
+        Serial.println("Failed to create executor, retrying...");
         delay(100);
     }
 
@@ -188,12 +197,7 @@ void loop()
     if (battery_voltage < 0.85 * 12.4) // 12.4 * 0.85 = 10.54 V
     {
         digitalWrite(PWR_LED, HIGH);
-        diagnostic_msg.level = diagnostic_msgs__msg__DiagnosticStatus__WARN;
-        diagnostic_msg.message.data = (char*)"Low Battery Voltage";
-        diagnostic_msg.message.size = strlen(diagnostic_msg.message.data);
-        diagnostic_msg.message.capacity = diagnostic_msg.message.size + 1;
-
-        RCSOFTCHECK(rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+        publishDiagnosticMessage("Low battery");
     }
     else
     {
@@ -265,6 +269,12 @@ void loop()
             u_int32_t num_valid_measurements =
                 num_measurements - num_invalid_measurements;
 
+            // Publish number of different measurement types
+            String msg = "Valid measurements: " +
+                         String(num_valid_measurements) + "/" +
+                         String(num_measurements);
+            publishDiagnosticMessage(msg.c_str());
+
             // Update scan message size
             scan_msg.ranges.size = num_measurements;
             scan_msg.intensities.size = num_measurements;
@@ -288,28 +298,13 @@ void loop()
                 String msg = "Too many invalid measurements: " +
                              String(num_invalid_measurements) + "/" +
                              String(num_measurements);
-                diagnostic_msg.level =
-                    diagnostic_msgs__msg__DiagnosticStatus__WARN;
-                diagnostic_msg.message.data = (char*)msg.c_str();
-                diagnostic_msg.message.size =
-                    strlen(diagnostic_msg.message.data);
-                diagnostic_msg.message.capacity =
-                    diagnostic_msg.message.size + 1;
-
-                RCSOFTCHECK(
-                    rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+                publishDiagnosticMessage(msg.c_str());
             }
         }
     }
     else
     {
-        // Publish diagnostics message
-        diagnostic_msg.level = diagnostic_msgs__msg__DiagnosticStatus__WARN;
-        diagnostic_msg.message.data = (char*)"Lidar not connected";
-        diagnostic_msg.message.size = strlen(diagnostic_msg.message.data);
-        diagnostic_msg.message.capacity = diagnostic_msg.message.size + 1;
-
-        RCSOFTCHECK(rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
+        publishDiagnosticMessage("Lidar not connected");
     }
 
     RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));

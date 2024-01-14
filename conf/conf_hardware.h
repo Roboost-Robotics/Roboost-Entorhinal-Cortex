@@ -27,6 +27,14 @@
 #define RPLIDAR_TX 17
 
 /**
+ * @brief IMU specific configs
+ *
+ */
+#define IMU_SDA 21
+#define IMU_SCL 22
+#define IMU_ADRESS 0x68
+
+/**
  * @brief Battery specific configs
  *
  */

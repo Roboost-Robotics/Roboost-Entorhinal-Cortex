@@ -20,9 +20,13 @@
 
 #include <diagnostic_msgs/msg/diagnostic_status.h>
 #include <sensor_msgs/msg/laser_scan.h>
+#include <sensor_msgs/msg/imu.h>
 #include <std_msgs/msg/float32.h>
 
 #include <RPLidar.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
 
 #include "conf_hardware.h"
 // #include "conf_network.h"
@@ -30,12 +34,21 @@
 HardwareSerial RPLidarSerial(2);
 RPLidar lidar;
 
+Adafruit_MPU6050 mpu;
+
+sensors_event_t a, g, temp;
+
 rcl_publisher_t scan_publisher;
 rcl_publisher_t battery_publisher;
 rcl_publisher_t diagnostic_publisher;
+rcl_publisher_t imu_publisher;
+rcl_publisher_t temperature_publisher;
+
 sensor_msgs__msg__LaserScan scan_msg;
 std_msgs__msg__Float32 battery_msg;
 diagnostic_msgs__msg__DiagnosticStatus diagnostic_msg;
+sensor_msgs__msg__Imu imu_msg;
+std_msgs__msg__Float32 temperature_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
@@ -88,8 +101,18 @@ void setup()
     // Initialize the status LED
     pinMode(LED_BUILTIN, OUTPUT);
 
+    // Initialize the lidar
     lidar.begin(RPLidarSerial);
     lidar.startScan();
+
+    // Initialize the IMU
+    while (!mpu.begin())
+    {
+        Serial.println("Failed to find MPU6050 chip");
+        delay(100);
+    }
+    mpu.enableSleep(false);
+    mpu.enableCycle(false);
 
     // Configure micro-ROS
     // IPAddress agent_ip(AGENT_IP);
@@ -145,6 +168,17 @@ void setup()
         delay(100);
     }
 
+    while (
+        rclc_publisher_init_default(
+            &imu_publisher, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
+            "imu") != RCL_RET_OK)
+    {
+        Serial.println(
+            "Failed to create imu publisher, retrying...");
+        delay(100);
+    }
+
     while (rclc_executor_init(&executor, &support.context, 1, &allocator) !=
            RCL_RET_OK)
     {
@@ -156,6 +190,7 @@ void setup()
     digitalWrite(LED_BUILTIN, HIGH);
     digitalWrite(RPLIDAR_MOTOR, HIGH);
 
+    // Initialize scan message
     // Set frame_id
     scan_msg.header.frame_id.data = (char*)"lidar_link";
     scan_msg.header.frame_id.size = strlen(scan_msg.header.frame_id.data);
@@ -171,6 +206,42 @@ void setup()
     scan_msg.intensities.data = intensities_buffer;
     scan_msg.intensities.size = 0;
     scan_msg.intensities.capacity = max_measurements;
+
+    // Initialize IMU message
+    imu_msg.header.frame_id.data = (char*)"imu_link";
+    imu_msg.header.frame_id.size = strlen(imu_msg.header.frame_id.data);
+    imu_msg.header.frame_id.capacity = imu_msg.header.frame_id.size + 1;
+
+
+    double* temp_covariance = (double*)malloc(9 * sizeof(double));
+
+    for (int i = 0; i < 9; i++)
+    {
+        if (i % 4 != 0)
+        {
+            temp_covariance[i] = 0.0;
+        }
+    }
+
+    temp_covariance[0] = 0.0025;
+    temp_covariance[4] = 0.0025;
+    temp_covariance[8] = 0.0025;
+
+    memcpy(imu_msg.orientation_covariance, temp_covariance, 9 * sizeof(double));
+
+    temp_covariance[0] = 0.02;
+    temp_covariance[4] = 0.02;
+    temp_covariance[8] = 0.02;
+
+    memcpy(imu_msg.angular_velocity_covariance, temp_covariance, 9 * sizeof(double));
+
+    temp_covariance[0] = 0.04;
+    temp_covariance[4] = 0.04;
+    temp_covariance[8] = 0.04;
+
+    memcpy(imu_msg.linear_acceleration_covariance, temp_covariance, 9 * sizeof(double));
+
+    free(temp_covariance);
 }
 
 void loop()
@@ -212,6 +283,37 @@ void loop()
         RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
         last_battery_publish_time = current_time; // Update last publish time
     }
+
+    // ------------------- IMU -------------------
+   
+    mpu.getEvent(&a, &g, &temp);
+
+    imu_msg.header.stamp.sec =
+        (synced_time_ms + millis() - last_time_sync_ms) / 1000;
+    imu_msg.header.stamp.nanosec = synced_time_ns + (micros() * 1000 - last_time_sync_ns);
+    imu_msg.header.stamp.nanosec %= 1000000000;
+
+    imu_msg.orientation.x = 0.0;
+    imu_msg.orientation.y = 0.0;
+    imu_msg.orientation.z = 0.0;
+    imu_msg.orientation.w = 1.0;
+
+    imu_msg.angular_velocity.x = g.gyro.x;
+    imu_msg.angular_velocity.y = g.gyro.y;
+    imu_msg.angular_velocity.z = g.gyro.z;
+
+    imu_msg.linear_acceleration.x = a.acceleration.x;
+    imu_msg.linear_acceleration.y = a.acceleration.y;
+    imu_msg.linear_acceleration.z = a.acceleration.z;
+
+    RCSOFTCHECK(rcl_publish(&imu_publisher, &imu_msg, NULL));
+
+    // ------------------- TEMPERATURE -------------------
+
+    temperature_msg.data = temp.temperature;
+    RCSOFTCHECK(rcl_publish(&temperature_publisher, &temperature_msg, NULL));    
+
+    // ------------------- LIDAR -------------------
 
     if (lidar.isOpen())
     {

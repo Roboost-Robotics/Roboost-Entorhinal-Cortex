@@ -1,8 +1,8 @@
 /**
  * @file core.cpp
  * @author Friedl Jakob (friedl.jak@gmail.com)
- * @brief Core file handling ROS communication and sensor processing. Currently supports the Roboost-V2 sensorshield
- * hardware.
+ * @brief Core file handling ROS communication and sensor processing. Currently
+ * supports the Roboost-V2 sensorshield hardware.
  * @version 0.1
  * @date 2023-07-06
  *
@@ -19,13 +19,13 @@
 #include <rclc/rclc.h>
 
 #include <diagnostic_msgs/msg/diagnostic_status.h>
-#include <sensor_msgs/msg/laser_scan.h>
 #include <sensor_msgs/msg/imu.h>
+#include <sensor_msgs/msg/laser_scan.h>
 #include <std_msgs/msg/float32.h>
 
-#include <RPLidar.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+#include <RPLidar.h>
 #include <Wire.h>
 
 #include "conf_hardware.h"
@@ -55,8 +55,9 @@ rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
 
-unsigned long last_battery_publish_time = 0;
-const unsigned long battery_publish_interval = 2000;
+// Variables for publishing battery level and temperature
+unsigned long last_infrequent_publish_time = 0;
+const unsigned long infrequent_publish_interval = 2000;
 
 // Variables for calculating scan time
 unsigned long scan_start_time = 0;
@@ -85,6 +86,28 @@ void publishDiagnosticMessage(const char* message)
     RCSOFTCHECK(rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
 }
 
+bool performInitializationWithFeedback(std::function<rcl_ret_t()> initFunction)
+{
+    while (true)
+    {
+        if (initFunction() == RCL_RET_OK)
+        {
+            return true; // Initialization successful
+        }
+        else
+        {
+            // Flash LED to indicate failure
+            digitalWrite(LED_BUILTIN, HIGH);
+            delay(100);
+            digitalWrite(LED_BUILTIN, LOW);
+            delay(100);
+        }
+    }
+}
+
+#define INIT(initCall)                                                         \
+    performInitializationWithFeedback([&]() { return (initCall); })
+
 void setup()
 {
     // Initialize serial and lidar
@@ -108,7 +131,10 @@ void setup()
     // Initialize the IMU
     while (!mpu.begin())
     {
-        Serial.println("Failed to find MPU6050 chip");
+        // Serial.println("Failed to find MPU6050 chip");
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(100);
+        digitalWrite(LED_BUILTIN, LOW);
         delay(100);
     }
     mpu.enableSleep(false);
@@ -126,65 +152,16 @@ void setup()
 
     allocator = rcl_get_default_allocator();
 
-    while (rclc_support_init(&support, 0, NULL, &allocator) != RCL_RET_OK)
-    {
-        Serial.println("Failed to create init options, retrying...");
-        delay(100);
-    }
-
-    while (rclc_node_init_default(&node, "lidar_node", "", &support) !=
-           RCL_RET_OK)
-    {
-        Serial.println("Failed to create node, retrying...");
-        delay(100);
-    }
-
-    while (rclc_publisher_init_default(
-               &scan_publisher, &node,
-               ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan),
-               "scan") != RCL_RET_OK)
-    {
-        Serial.println("Failed to create scan publisher, retrying...");
-        delay(100);
-    }
-
-    while (rclc_publisher_init_default(
-               &battery_publisher, &node,
-               ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
-               "battery_level") != RCL_RET_OK)
-    {
-        Serial.println("Failed to create battery publisher, retrying...");
-        delay(100);
-    }
-
-    while (
-        rclc_publisher_init_default(
-            &diagnostic_publisher, &node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticStatus),
-            "diagnostics") != RCL_RET_OK)
-    {
-        Serial.println(
-            "Failed to create diagnostic publisher, retrying...");
-        delay(100);
-    }
-
-    while (
-        rclc_publisher_init_default(
-            &imu_publisher, &node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
-            "imu") != RCL_RET_OK)
-    {
-        Serial.println(
-            "Failed to create imu publisher, retrying...");
-        delay(100);
-    }
-
-    while (rclc_executor_init(&executor, &support.context, 1, &allocator) !=
-           RCL_RET_OK)
-    {
-        Serial.println("Failed to create executor, retrying...");
-        delay(100);
-    }
+    // clang-format off
+    INIT(rclc_support_init(&support, 0, NULL, &allocator));
+    INIT(rclc_node_init_default(&node, "lidar_node", "", &support));
+    INIT(rclc_publisher_init_default(&scan_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan), "scan"));
+    INIT(rclc_publisher_init_default(&battery_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "battery_level"));
+    INIT(rclc_publisher_init_default(&diagnostic_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticStatus), "diagnostics"));
+    INIT(rclc_publisher_init_default(&imu_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu"));
+    INIT(rclc_publisher_init_default(&temperature_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "temperature"));
+    INIT(rclc_executor_init(&executor, &support.context, 1, &allocator));
+    // clang-format on
 
     delay(500);
     digitalWrite(LED_BUILTIN, HIGH);
@@ -212,7 +189,6 @@ void setup()
     imu_msg.header.frame_id.size = strlen(imu_msg.header.frame_id.data);
     imu_msg.header.frame_id.capacity = imu_msg.header.frame_id.size + 1;
 
-
     double* temp_covariance = (double*)malloc(9 * sizeof(double));
 
     for (int i = 0; i < 9; i++)
@@ -233,13 +209,15 @@ void setup()
     temp_covariance[4] = 0.02;
     temp_covariance[8] = 0.02;
 
-    memcpy(imu_msg.angular_velocity_covariance, temp_covariance, 9 * sizeof(double));
+    memcpy(imu_msg.angular_velocity_covariance, temp_covariance,
+           9 * sizeof(double));
 
     temp_covariance[0] = 0.04;
     temp_covariance[4] = 0.04;
     temp_covariance[8] = 0.04;
 
-    memcpy(imu_msg.linear_acceleration_covariance, temp_covariance, 9 * sizeof(double));
+    memcpy(imu_msg.linear_acceleration_covariance, temp_covariance,
+           9 * sizeof(double));
 
     free(temp_covariance);
 }
@@ -262,35 +240,14 @@ void loop()
         }
     }
 
-    // Read battery voltage level
-    float battery_voltage = analogRead(PWR_IN) * (3.3 * PWR_FACTOR / 4095.0);
-
-    if (battery_voltage < 0.85 * 12.4) // 12.4 * 0.85 = 10.54 V
-    {
-        digitalWrite(PWR_LED, HIGH);
-        publishDiagnosticMessage("Low battery");
-    }
-    else
-    {
-        digitalWrite(PWR_LED, LOW);
-    }
-
-    // Publish battery level every 2 seconds
-    unsigned long current_time = millis();
-    if (current_time - last_battery_publish_time >= battery_publish_interval)
-    {
-        battery_msg.data = battery_voltage;
-        RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
-        last_battery_publish_time = current_time; // Update last publish time
-    }
-
     // ------------------- IMU -------------------
-   
+
     mpu.getEvent(&a, &g, &temp);
 
     imu_msg.header.stamp.sec =
         (synced_time_ms + millis() - last_time_sync_ms) / 1000;
-    imu_msg.header.stamp.nanosec = synced_time_ns + (micros() * 1000 - last_time_sync_ns);
+    imu_msg.header.stamp.nanosec =
+        synced_time_ns + (micros() * 1000 - last_time_sync_ns);
     imu_msg.header.stamp.nanosec %= 1000000000;
 
     imu_msg.orientation.x = 0.0;
@@ -308,10 +265,37 @@ void loop()
 
     RCSOFTCHECK(rcl_publish(&imu_publisher, &imu_msg, NULL));
 
-    // ------------------- TEMPERATURE -------------------
+    // Publish battery level and temperature every 2 seconds
+    unsigned long current_time = millis();
+    if (current_time - last_infrequent_publish_time >=
+        infrequent_publish_interval)
+    {
 
-    temperature_msg.data = temp.temperature;
-    RCSOFTCHECK(rcl_publish(&temperature_publisher, &temperature_msg, NULL));    
+        // ------------------- BATTERY -------------------
+
+        float battery_voltage =
+            analogRead(PWR_IN) * (3.3 * PWR_FACTOR / 4095.0);
+
+        if (battery_voltage < 0.85 * 12.4) // 12.4 * 0.85 = 10.54 V
+        {
+            digitalWrite(PWR_LED, HIGH);
+            publishDiagnosticMessage("Low battery");
+        }
+        else
+        {
+            digitalWrite(PWR_LED, LOW);
+        }
+
+        battery_msg.data = battery_voltage;
+        RCSOFTCHECK(rcl_publish(&battery_publisher, &battery_msg, NULL));
+        last_infrequent_publish_time = current_time; // Update last publish time
+
+        // ------------------- TEMPERATURE -------------------
+
+        temperature_msg.data = temp.temperature;
+        RCSOFTCHECK(
+            rcl_publish(&temperature_publisher, &temperature_msg, NULL));
+    }
 
     // ------------------- LIDAR -------------------
 
@@ -372,9 +356,9 @@ void loop()
                 num_measurements - num_invalid_measurements;
 
             // Publish number of different measurement types
-            String msg = "Valid measurements: " +
-                         String(num_valid_measurements) + "/" +
-                         String(num_measurements);
+            String msg =
+                "Valid measurements: " + String(num_valid_measurements) + "/" +
+                String(num_measurements);
             publishDiagnosticMessage(msg.c_str());
 
             // Update scan message size

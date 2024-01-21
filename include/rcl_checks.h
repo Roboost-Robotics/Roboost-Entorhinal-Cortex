@@ -1,7 +1,7 @@
 /**
- * @file rcl_checks.h //todo
- * @author your name (you@domain.com)
- * @brief
+ * @file rcl_checks.h
+ * @author Jakob Friedl (friedl.jak@gmail.com)
+ * @brief This file contains the rcl checks for the micro-ROS communication.
  * @version 0.1
  * @date 2023-07-06
  *
@@ -11,35 +11,30 @@
 #ifndef RCL_CHECKS_H
 #define RCL_CHECKS_H
 
+#include "conf_hardware.h"
 #include <Arduino.h>
 
-// Error handle loop
 /**
- * @brief //todo
- *
+ * @brief This function is used to blink the LED to indicate an error and retry.
  */
-inline void error_loop()
+inline void error_indication()
 {
-    while (1)
+    for (int i = 0; i < 5; i++)
     {
-        Serial.println("RC check failed. Press EN to reset.");
-        Serial.print("    Error: ");
-        Serial.println(rcutils_get_error_string().str);
-        rcutils_reset_error();
-        Serial.print("    Timestamp: ");
-        Serial.println(millis());
-        Serial.print("    Free Heap: ");
-        Serial.println(ESP.getFreeHeap());
-        delay(1000);
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(100);
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(100);
     }
 }
 
 #define RCCHECK(fn)                                                            \
     {                                                                          \
         rcl_ret_t temp_rc = fn;                                                \
-        if ((temp_rc != RCL_RET_OK))                                           \
+        while ((temp_rc != RCL_RET_OK))                                        \
         {                                                                      \
-            error_loop();                                                      \
+            error_indication();                                                \
+            temp_rc = fn;                                                      \
         }                                                                      \
     }
 #define RCSOFTCHECK(fn)                                                        \

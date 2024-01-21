@@ -43,12 +43,14 @@ rcl_publisher_t battery_publisher;
 rcl_publisher_t diagnostic_publisher;
 rcl_publisher_t imu_publisher;
 rcl_publisher_t temperature_publisher;
+rcl_publisher_t delta_time_publisher;
 
 sensor_msgs__msg__LaserScan scan_msg;
 std_msgs__msg__Float32 battery_msg;
 diagnostic_msgs__msg__DiagnosticStatus diagnostic_msg;
 sensor_msgs__msg__Imu imu_msg;
 std_msgs__msg__Float32 temperature_msg;
+std_msgs__msg__Float32 delta_time_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
@@ -76,6 +78,8 @@ const int timeout_ms = 500;
 int64_t synced_time_ms = 0;
 int64_t synced_time_ns = 0;
 
+unsigned long last_time = 0;
+
 void publishDiagnosticMessage(const char* message)
 {
     diagnostic_msg.level = diagnostic_msgs__msg__DiagnosticStatus__WARN;
@@ -85,28 +89,6 @@ void publishDiagnosticMessage(const char* message)
 
     RCSOFTCHECK(rcl_publish(&diagnostic_publisher, &diagnostic_msg, NULL));
 }
-
-bool performInitializationWithFeedback(std::function<rcl_ret_t()> initFunction)
-{
-    while (true)
-    {
-        if (initFunction() == RCL_RET_OK)
-        {
-            return true; // Initialization successful
-        }
-        else
-        {
-            // Flash LED to indicate failure
-            digitalWrite(LED_BUILTIN, HIGH);
-            delay(100);
-            digitalWrite(LED_BUILTIN, LOW);
-            delay(100);
-        }
-    }
-}
-
-#define INIT(initCall)                                                         \
-    performInitializationWithFeedback([&]() { return (initCall); })
 
 void setup()
 {
@@ -153,14 +135,51 @@ void setup()
     allocator = rcl_get_default_allocator();
 
     // clang-format off
-    INIT(rclc_support_init(&support, 0, NULL, &allocator));
-    INIT(rclc_node_init_default(&node, "lidar_node", "", &support));
-    INIT(rclc_publisher_init_default(&scan_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan), "scan"));
-    INIT(rclc_publisher_init_default(&battery_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "battery_level"));
-    INIT(rclc_publisher_init_default(&diagnostic_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticStatus), "diagnostics"));
-    INIT(rclc_publisher_init_default(&imu_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu"));
-    INIT(rclc_publisher_init_default(&temperature_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "temperature"));
-    INIT(rclc_executor_init(&executor, &support.context, 1, &allocator));
+    RCCHECK(rclc_support_init(
+        &support,
+        0,
+        NULL,
+        &allocator));
+    RCCHECK(rclc_node_init_default(
+        &node,
+        "lidar_node",
+        "",
+        &support));
+    RCCHECK(rclc_publisher_init_default(
+        &scan_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan),
+        "scan"));
+    RCCHECK(rclc_publisher_init_default(
+        &battery_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "battery_level"));
+    RCCHECK(rclc_publisher_init_default(
+        &diagnostic_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticStatus),
+        "diagnostics"));
+    RCCHECK(rclc_publisher_init_default(
+        &imu_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
+        "imu"));
+    RCCHECK(rclc_publisher_init_default(
+        &temperature_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "temperature"));
+    RCCHECK(rclc_publisher_init_default(
+        &delta_time_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+        "delta_time/EC"));
+    RCCHECK(rclc_executor_init(
+        &executor,
+        &support.context,
+        1,
+        &allocator));
     // clang-format on
 
     delay(500);
@@ -224,6 +243,15 @@ void setup()
 
 void loop()
 {
+    // Calculate the delta time
+    unsigned long now = millis();
+    double dt = (now - last_time) / 1000.0;
+    last_time = now;
+
+    // Publish the delta time
+    delta_time_msg.data = dt;
+    RCSOFTCHECK(rcl_publish(&delta_time_publisher, &delta_time_msg, NULL));
+
     // Time synchronization
     if (millis() - last_time_sync_ms > time_sync_interval)
     {

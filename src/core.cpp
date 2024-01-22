@@ -10,6 +10,7 @@
  *
  */
 
+/*
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
 
@@ -19,6 +20,11 @@
 #include <rclc/rclc.h>
 
 #include <diagnostic_msgs/msg/diagnostic_status.h>
+
+// TODO: use these messages instead:
+#include <sensor_msgs/msg/battery_state.h>
+#include <sensor_msgs/msg/temperature.h>
+
 #include <sensor_msgs/msg/imu.h>
 #include <sensor_msgs/msg/laser_scan.h>
 #include <std_msgs/msg/float32.h>
@@ -155,11 +161,16 @@ void setup()
     // clang-format off
     INIT(rclc_support_init(&support, 0, NULL, &allocator));
     INIT(rclc_node_init_default(&node, "lidar_node", "", &support));
-    INIT(rclc_publisher_init_default(&scan_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan), "scan"));
-    INIT(rclc_publisher_init_default(&battery_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "battery_level"));
-    INIT(rclc_publisher_init_default(&diagnostic_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticStatus), "diagnostics"));
-    INIT(rclc_publisher_init_default(&imu_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu"));
-    INIT(rclc_publisher_init_default(&temperature_publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "temperature"));
+    INIT(rclc_publisher_init_default(&scan_publisher, &node,
+ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, LaserScan), "scan"));
+    INIT(rclc_publisher_init_default(&battery_publisher, &node,
+ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "battery_level"));
+    INIT(rclc_publisher_init_default(&diagnostic_publisher, &node,
+ROSIDL_GET_MSG_TYPE_SUPPORT(diagnostic_msgs, msg, DiagnosticStatus),
+"diagnostics")); INIT(rclc_publisher_init_default(&imu_publisher, &node,
+ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu), "imu"));
+    INIT(rclc_publisher_init_default(&temperature_publisher, &node,
+ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32), "temperature"));
     INIT(rclc_executor_init(&executor, &support.context, 1, &allocator));
     // clang-format on
 
@@ -395,3 +406,4 @@ void loop()
 
     RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
 }
+*/

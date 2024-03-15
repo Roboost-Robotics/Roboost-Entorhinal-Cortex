@@ -24,7 +24,27 @@ The entorhinal cortex is designed to be modular. This means that the code can be
 
 ## Installation
 
-The project can be installed as a standalone project or as part of the [Roboost-Cerebrum](TODO) repository. In case of the latter, the micro-ROS agent will be executed automatically as a Docker container. If you only want to use the entorhinal cortex, you can install it as a standalone project. In this case, you will need to install the micro-ROS agent manually.
+The project can be installed as a standalone project or as part of the [Roboost-Cerebrum](https://github.com/Roboost-Robotics/Roboost-Cerebrum) repository. In case of the latter, the micro-ROS agent will be executed automatically as a Docker container. If you only want to use the entorhinal cortex, you can install it as a standalone project. In this case, you will need to install the micro-ROS agent manually.
+
+Before uploading the code, make sure you have configured the correct port in the [platformio.ini](platformio.ini) file. I would recommend to use simlinks so that it works even if the port changes. You can do this by adding a rules file to `/etc/udev/rules.d/`:
+
+```bash
+sudo nano /etc/udev/rules.d/roboost-mecanum-serial.rules
+```
+
+Use the following line to check the correct port (replace `/dev/ttyUSB1` with the correct port):
+
+```bash
+udevadm info -a -n /dev/ttyUSB1 | grep KERNELS
+```
+
+Note down the `KERNELS` value and use it in the rules file by adding the following line:
+
+```bash
+SUBSYSTEM=="tty", KERNELS=="1-1.1", SYMLINK+="entorhinalCortex"
+```
+
+Replace `1-1.1` with the correct value. Now you can use the symlink `/dev/entorhinalCortex` in the [platformio.ini](platformio.ini) file. This way, every time you connect the microcontroller to the same USB port, it will use the symlink.
 
 ### Standalone Installation
 

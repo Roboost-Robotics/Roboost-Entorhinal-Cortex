@@ -72,7 +72,6 @@ size_t num_measurements = 0;
 
 // Time synchronization variables
 unsigned long last_time_sync_ms = 0;
-unsigned long last_time_sync_ns = 0;
 unsigned long time_sync_interval = 1000; // Sync timeout
 const int timeout_ms = 500;
 int64_t synced_time_ms = 0;
@@ -260,11 +259,10 @@ void loop()
 
         if (rmw_uros_epoch_synchronized())
         {
-            // Get time in milliseconds or nanoseconds
-            synced_time_ms = rmw_uros_epoch_millis();
+            // Get time in nanoseconds
             synced_time_ns = rmw_uros_epoch_nanos();
+            synced_time_ms = rmw_uros_epoch_millis();
             last_time_sync_ms = millis();
-            last_time_sync_ns = micros() * 1000;
         }
     }
 
@@ -272,11 +270,8 @@ void loop()
 
     mpu.getEvent(&a, &g, &temp);
 
-    imu_msg.header.stamp.sec =
-        (synced_time_ms + millis() - last_time_sync_ms) / 1000;
-    imu_msg.header.stamp.nanosec =
-        synced_time_ns + (micros() * 1000 - last_time_sync_ns);
-    imu_msg.header.stamp.nanosec %= 1000000000;
+    imu_msg.header.stamp.sec = synced_time_ms / 1000;
+    imu_msg.header.stamp.nanosec = synced_time_ns;
 
     imu_msg.orientation.x = 0.0;
     imu_msg.orientation.y = 0.0;
@@ -396,11 +391,8 @@ void loop()
             if (num_partially_invalid_measurements / num_valid_measurements <
                 0.1) // TODO: Make this a parameter
             {
-                scan_msg.header.stamp.sec =
-                    (synced_time_ms + millis() - last_time_sync_ms) / 1000;
-                scan_msg.header.stamp.nanosec =
-                    synced_time_ns + (micros() * 1000 - last_time_sync_ns);
-                scan_msg.header.stamp.nanosec %= 1000000000;
+                scan_msg.header.stamp.sec = synced_time_ms / 1000;
+                scan_msg.header.stamp.nanosec = synced_time_ns;
 
                 scan_msg.scan_time = (scan_end_time - scan_start_time) / 1000.0;
                 scan_msg.time_increment = scan_msg.scan_time / num_measurements;
